@@ -23,11 +23,6 @@
 - [ ] **P3.2** Auto-detect: route specs that import forbidden APIs (DataStore, MemoryStore) to studio mode
 - [ ] **P3.3** Unified output formatter so both modes look the same
 
-## Outreach
-- [x] **O.1** Write RFC doc (`docs/RFC.md`) — proposal + architecture + benefits
-- [x] **O.2** Comment on jsdotlua/jest-lua issue #2 — draft in `docs/OUTREACH.md` (notnice to send manually)
-- [x] **O.3** N/A — decision: no outreach to christopher-buss (per notnice)
-
 ## Status legend
 - `[ ]` not started
 - `[~]` in progress
