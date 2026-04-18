@@ -1,0 +1,15 @@
+{
+  "name": "lute-jest-example",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "rbxts_include": {
+        "$path": "include",
+        "node_modules": {
+          "@rbxts": { "$path": "node_modules/@rbxts" }
+        }
+      },
+      "TS": { "$path": "out" }
+    }
+  }
+}

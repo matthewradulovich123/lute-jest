@@ -2,7 +2,8 @@
 // cli/index.ts — lute-jest CLI
 // Usage:
 //   bun cli/index.ts <spec.luau> [more.luau ...]
-//   bun cli/index.ts examples/   (runs all *.spec.luau under dir)
+//   bun cli/index.ts examples/                  (runs all *.spec.luau under dir)
+//   bun cli/index.ts examples-ts/               (auto-detects roblox-ts project: rbxtsc -> run out/)
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
@@ -14,6 +15,10 @@ const ROOT = resolve(__dirname, "..");
 const RUNNER = join(ROOT, "runtime", "runner.luau");
 const LUTE = process.env.LUTE_BIN || "/tmp/lute-bin/lute";
 
+function isRobloxTsProject(dir: string): boolean {
+	return existsSync(join(dir, "tsconfig.json")) && existsSync(join(dir, "package.json"));
+}
+
 function findSpecs(target: string): string[] {
 	const abs = resolve(target);
 	if (!existsSync(abs)) {
@@ -23,6 +28,21 @@ function findSpecs(target: string): string[] {
 	const s = statSync(abs);
 	if (s.isFile()) return [abs];
 	if (s.isDirectory()) {
+		// roblox-ts project? compile first, then walk out/
+		if (isRobloxTsProject(abs)) {
+			console.log(`\x1b[2m[lute-jest] compiling roblox-ts project ${abs} ...\x1b[0m`);
+			const r = spawnSync("bunx", ["rbxtsc", "-p", "."], { cwd: abs, stdio: "inherit" });
+			if (r.status !== 0) {
+				console.error("[lute-jest] rbxtsc failed");
+				process.exit(2);
+			}
+			const outDir = join(abs, "out");
+			if (!existsSync(outDir)) {
+				console.error("[lute-jest] no out/ after compile");
+				process.exit(2);
+			}
+			return findSpecs(outDir);
+		}
 		const out: string[] = [];
 		for (const entry of readdirSync(abs)) {
 			const p = join(abs, entry);

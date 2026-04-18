@@ -174,6 +174,21 @@ function M.expect(actual)
 	local matchers = makeMatchers(actual, false)
 	matchers.never = makeMatchers(actual, true)
 	matchers["not"] = matchers.never  -- jest uses .not
+
+	-- Support colon-call syntax: expect(x):toBe(y) (used by roblox-ts compiled output).
+	-- Wrap each matcher so the first arg (self) is dropped when it's the matchers table.
+	local function wrap(orig)
+		return function(a, ...)
+			if a == matchers or a == matchers.never then return orig(...) end
+			return orig(a, ...)
+		end
+	end
+	for k, v in pairs(matchers) do
+		if type(v) == "function" then matchers[k] = wrap(v) end
+	end
+	for k, v in pairs(matchers.never) do
+		if type(v) == "function" then matchers.never[k] = wrap(v) end
+	end
 	return matchers
 end
 

@@ -1,0 +1,11 @@
+{
+  "name": "lute-jest-example-ts",
+  "version": "0.0.1",
+  "private": true,
+  "devDependencies": {
+    "roblox-ts": "^3.0.0",
+    "@rbxts/types": "^1.0.825",
+    "@rbxts/compiler-types": "^3.0.0-types.0",
+    "@rbxts/jest-globals": "file:./jest-globals"
+  }
+}
