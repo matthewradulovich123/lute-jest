@@ -167,6 +167,36 @@ local function makeMatchers(actual, negate: boolean)
 		end
 		check(found, string.format("expected mock to have been called with %s", fmt(expected)))
 	end
+	function m.toHaveLength(n)
+		local len = type(actual) == "string" and #actual or (type(actual) == "table" and #actual or 0)
+		check(len == n, string.format("expected length %d, got %d", n, len))
+	end
+	function m.toMatch(pattern)
+		assert(type(actual) == "string", "toMatch requires a string")
+		check(string.find(actual, pattern) ~= nil, string.format("expected %q to match %q", actual, pattern))
+	end
+	function m.toMatchObject(subset)
+		assert(type(actual) == "table" and type(subset) == "table", "toMatchObject requires tables")
+		local function subsetEq(big, small)
+			for k, v in pairs(small) do
+				if type(v) == "table" and type(big[k]) == "table" then
+					if not subsetEq(big[k], v) then return false end
+				elseif not deepEqual(big[k], v) then return false end
+			end
+			return true
+		end
+		check(subsetEq(actual, subset), string.format("expected %s to match object %s", fmt(actual), fmt(subset)))
+	end
+	function m.toBeInstanceOf(class)
+		local mt = getmetatable(actual)
+		check(mt == class or (mt and mt.__index == class), string.format("expected instance of class"))
+	end
+	function m.toBeCloseTo(n, digits)
+		digits = digits or 2
+		local diff = math.abs(actual - n)
+		local tol = 0.5 * 10 ^ -digits
+		check(diff < tol, string.format("expected %s to be close to %s (diff=%s tol=%s)", fmt(actual), fmt(n), fmt(diff), fmt(tol)))
+	end
 	return m
 end
 

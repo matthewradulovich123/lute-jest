@@ -84,6 +84,14 @@ end
 -- Module cache + per-module require factory
 ------------------------------------------------------------
 local moduleCache: { [string]: any } = {}
+
+-- Pre-seed the cache with the jest module so any `require("../runtime/jest")`
+-- variant returns the singleton whose state the runner reports on.
+do
+	local scriptDir = debug.info(1, "s"):match("@?(.+)/[^/]+$") or "."
+	local jestPath = scriptDir .. "/jest.luau"
+	moduleCache[jestPath] = jest
+end
 local makeRequire
 
 -- Load and cache a Luau file at an absolute path

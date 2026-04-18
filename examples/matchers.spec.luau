@@ -1,0 +1,11 @@
+--!strict
+-- Use the jest globals injected by the runner (don't re-require, that gives a separate instance)
+describe("new matchers", function()
+	it("toHaveLength on string", function() expect("hello"):toHaveLength(5) end)
+	it("toHaveLength on table", function() expect({1,2,3,4}):toHaveLength(4) end)
+	it("toMatch with pattern", function() expect("hello world"):toMatch("wor%a+") end)
+	it("toMatchObject subset", function()
+		expect({ a = 1, b = 2, c = { d = 3 } }):toMatchObject({ b = 2, c = { d = 3 } })
+	end)
+	it("toBeCloseTo", function() expect(0.1 + 0.2):toBeCloseTo(0.3, 5) end)
+end)

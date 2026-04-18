@@ -5,7 +5,7 @@
 //   bun cli/index.ts examples/                  (runs all *.spec.luau under dir)
 //   bun cli/index.ts examples-ts/               (auto-detects roblox-ts project: rbxtsc -> run out/)
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,38 +58,64 @@ function findSpecs(target: string): string[] {
 function main() {
 	const args = process.argv.slice(2);
 	if (args.length === 0) {
-		console.error("usage: lute-jest <spec.luau | dir> [...]");
+		console.error("usage: lute-jest <spec.luau | dir> [...] [--workers N] [--bail]");
 		process.exit(2);
 	}
 
-	const specs = args.flatMap(findSpecs);
+	let workers = Math.max(1, Math.min(8, navigator?.hardwareConcurrency || 4));
+	let bail = false;
+	const targets: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--workers" && args[i + 1]) { workers = parseInt(args[++i]); continue; }
+		if (args[i] === "--bail") { bail = true; continue; }
+		targets.push(args[i]);
+	}
+
+	const specs = targets.flatMap(findSpecs);
 	if (specs.length === 0) {
 		console.error("[lute-jest] no .spec.luau files found");
 		process.exit(2);
 	}
 
-	let totalFiles = 0, failedFiles = 0;
+	let failedFiles = 0;
 	const start = Date.now();
 
-	for (const spec of specs) {
-		totalFiles++;
-		const rel = spec.startsWith(ROOT) ? spec.slice(ROOT.length + 1) : spec;
-		console.log(`\x1b[1m\x1b[36m●\x1b[0m \x1b[1m${rel}\x1b[0m`);
-		const r = spawnSync(LUTE, [RUNNER, spec], {
-			stdio: "inherit",
-			cwd: ROOT,
+	async function runOne(spec: string): Promise<{ rel: string; output: string; ok: boolean }> {
+		return new Promise((res) => {
+			const rel = spec.startsWith(ROOT) ? spec.slice(ROOT.length + 1) : spec;
+			let output = "";
+			const proc = spawn(LUTE, [RUNNER, spec], { cwd: ROOT });
+			proc.stdout.on("data", (d) => (output += d.toString()));
+			proc.stderr.on("data", (d) => (output += d.toString()));
+			proc.on("close", (code) => res({ rel, output, ok: code === 0 }));
 		});
-		if (r.status !== 0) failedFiles++;
 	}
 
-	const ms = Date.now() - start;
-	console.log("");
-	console.log(
-		`\x1b[1mFiles: \x1b[32m${totalFiles - failedFiles} passed\x1b[0m, ` +
-		`\x1b[31m${failedFiles} failed\x1b[0m, ` +
-		`\x1b[1m${totalFiles} total\x1b[0m  (${ms}ms)`
-	);
-	process.exit(failedFiles > 0 ? 1 : 0);
+	(async () => {
+		const queue = [...specs];
+		const inflight: Promise<void>[] = [];
+		const pump = async () => {
+			while (queue.length > 0) {
+				if (bail && failedFiles > 0) return;
+				const spec = queue.shift()!;
+				const { rel, output, ok } = await runOne(spec);
+				console.log(`\x1b[1m\x1b[36m●\x1b[0m \x1b[1m${rel}\x1b[0m`);
+				process.stdout.write(output);
+				if (!ok) failedFiles++;
+			}
+		};
+		for (let i = 0; i < workers; i++) inflight.push(pump());
+		await Promise.all(inflight);
+
+		const ms = Date.now() - start;
+		console.log("");
+		console.log(
+			`\x1b[1mFiles: \x1b[32m${specs.length - failedFiles} passed\x1b[0m, ` +
+			`\x1b[31m${failedFiles} failed\x1b[0m, ` +
+			`\x1b[1m${specs.length} total\x1b[0m  (${ms}ms, ${workers} workers)`
+		);
+		process.exit(failedFiles > 0 ? 1 : 0);
+	})();
 }
 
 main();
