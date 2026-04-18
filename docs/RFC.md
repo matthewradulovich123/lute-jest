@@ -9,7 +9,7 @@
 
 ## TL;DR
 
-Run roblox-ts/Luau jest specs directly under [Lute 1.0](https://github.com/luau-lang/lute) — no Roblox Studio, no Open Cloud worker, no `.rbxl` round-trip. A Bun CLI compiles your TS, a `require()` redirector swaps `@rbxts/services` and `@flamework/networking` for polyfills, jest-lua runs in-process, and a sourcemap reverse turns Luau stack frames back into `.ts:line:col`. Tests that genuinely need real Roblox APIs fall back to christopher-buss/jest-roblox-cli via `--mode studio`.
+Run roblox-ts/Luau jest specs directly under [Lute 1.0](https://github.com/luau-lang/lute) — no Roblox Studio, no Open Cloud worker, no `.rbxl` round-trip. A Bun CLI compiles your TS, a `require()` redirector swaps `@rbxts/services` and `@flamework/networking` for polyfills, jest-lua runs in-process, and a sourcemap reverse turns Luau stack frames back into `.ts:line:col`. Tests that genuinely need real Roblox APIs fall back to an existing Studio/Open-Cloud-based runner (e.g. jest-roblox-cli) via `--mode studio`.
 
 The result: pure-logic specs run in **<1s cold** instead of 10–60s of Studio boot, CI doesn't need a Windows runner with a Roblox license, and the dev loop stops feeling like a punishment.
 
@@ -204,16 +204,15 @@ Mirrors `TASKS.md`. Phase numbers map 1:1 to the P*.* / O.* items there.
 
 - **OQ1.** Should the polyfills live in this repo or be a separate package? Argument for separate: other Lute-based tools (REPL, scripts) could use them. Argument for here: tighter coupling to lute-jest's expectations.
 - **OQ2.** Should this live under [jsdotlua](https://github.com/jsdotlua) (since it's effectively answering jest-lua issue #2 for the Lute case)? Or stay independent and just play nice with jest-lua upstream?
-- **OQ3.** Should we collaborate with christopher-buss to make this a `--mode lute` flag inside jest-roblox-cli rather than a separate tool? See `docs/OUTREACH.md`.
-- **OQ4.** Pure-Luau (non-roblox-ts) jest support. Out of scope for now, but the plumbing would be 80% the same. Defer until someone asks.
+- **OQ3.** Pure-Luau (non-roblox-ts) jest support. Out of scope for now, but the plumbing would be 80% the same. Defer until someone asks.
 
 ---
 
 ## Prior art
 
 - **[jsdotlua/jest-lua](https://github.com/jsdotlua/jest-lua)** — the canonical Jest port for Lua, currently Roblox-only at runtime. [Issue #2](https://github.com/jsdotlua/jest-lua/issues/2) is the open ask for non-Roblox runtime support; this RFC answers it for Lute specifically.
-- **[christopher-buss/jest-roblox-cli](https://github.com/christopher-buss/jest-roblox-cli)** — runs roblox-ts/Luau jest specs via Open Cloud or Studio, uses Lute internally for **coverage instrumentation** but not as the test runtime itself. lute-jest extends Lute's role from "coverage tool" to "test runtime."
-- **[christopher-buss/rbxts-transformer-jest](https://github.com/christopher-buss/rbxts-transformer-jest)** — TypeScript transformer that hoists `jest.mock(...)` calls above imports at compile time. lute-jest expects this transformer to be installed; we don't reinvent the hoist.
+- **[jest-roblox-cli](https://github.com/christopher-buss/jest-roblox-cli)** — existing CLI that runs roblox-ts/Luau jest specs via Open Cloud or Studio, with Lute used for coverage instrumentation. Inspired the hybrid-mode escape hatch; lute-jest is an independent project that extends Lute's role from "coverage tool" to "test runtime."
+- **[rbxts-transformer-jest](https://github.com/christopher-buss/rbxts-transformer-jest)** — TypeScript transformer that hoists `jest.mock(...)` calls above imports at compile time. lute-jest expects this transformer to be installed; we don't reinvent the hoist.
 - **[littensy/rbxts-jest](https://github.com/littensy/rbxts-jest)** — TypeScript type definitions for Jest Lua. Unchanged consumer surface — `import { expect, describe, it } from "@rbxts/jest-globals"` works in both worlds.
 - **[luau-lang/lute](https://github.com/luau-lang/lute)** — the standalone Luau runtime, 1.0 released 2026-04-17. Provides the in-process require hook and FFI we build on.
 - **[rojo-rbx/rokit](https://github.com/rojo-rbx/rokit)** — toolchain manager. `rokit add luau-lang/lute` is how end users install Lute alongside roblox-ts/rojo.

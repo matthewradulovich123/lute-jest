@@ -26,7 +26,7 @@
 ## Outreach
 - [~] **O.1** Write RFC doc (`docs/RFC.md`) — proposal + architecture + benefits
 - [~] **O.2** Comment on jsdotlua/jest-lua issue #2 with our plan + offer collaboration
-- [~] **O.3** Ping christopher-buss (jest-roblox-cli author) — ask if he'd merge upstream or wants this separate
+- [x] **O.3** N/A — decision: no outreach to christopher-buss (per notnice)
 
 ## Status legend
 - `[ ]` not started
