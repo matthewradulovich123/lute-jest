@@ -1,42 +1,69 @@
-# Jest-Lua compatibility status
+# jest-lua compatibility status
 
-## Goal
+## TL;DR
 
-Run real `@rbxts/jest` (jsdotlua/jest-lua) tests under Lute, so people can keep
-their existing test code instead of using lute-jest's homebrew runtime.
+The loader (`runtime/jest_lua_loader.luau`) successfully boots every
+package's `init.lua` from `node_modules/@rbxts-js/`. Cross-package
+require chains work. The remaining blocker is **architectural, not
+technical**: `JestGlobals` itself raises `"Do not import JestGlobals
+outside of the Jest 3 test environment"` — the package only works
+when bootstrapped by `jest-core.runCLI()`, which spawns a full
+worker/environment/circus stack.
 
-## Status: prototype loader, blocked on package flattening
+So lute-jest can't just "use jest-lua's matchers" — running their
+matchers means running their entire runner, which is a from-scratch port.
 
-`runtime/jest_lua_loader.luau` is a working prototype that:
-- Maps `script.Parent` package navigation to `node_modules/@rbxts-js/<kebab>/src/init.lua`
-- Maintains a kebab-case → PascalCase name map (LuauPolyfill, JestEnvironment, etc.)
-- Wraps `require()` to handle both Instance-like sentinels and string specifiers
+## What the loader actually solves
 
-**It loads jest-globals' init.lua without crashing**, but resolution stops
-there because the package init files reference siblings via patterns like
-`script.Parent:WaitForChild("Expect")` — and in a Roblox build, all
-packages get **flattened** into a single `Packages/` folder by Wally/Rojo.
-That flattening doesn't happen in `node_modules/@rbxts-js/`.
+It removes every Roblox-specific blocker for *loading* jest-lua source:
 
-## What would unblock this
+- **`script.Parent.X` package navigation** — emulated against the
+  flat `node_modules/@rbxts-js/<kebab>/src/init.lua` layout via a
+  kebab→PascalCase name map (53 entries).
+- **`script.X` sub-module access** — virtual `script` per loaded file,
+  with `__index` resolving siblings to disk paths.
+- **`script.Parent.Parent[...]` chains** — `_makeFolder` walks up dirs
+  and bottoms out in a `_makePackagesFolder` that handles cross-pkg lookups.
+- **`fs.exists` yielding inside `__index`** — pre-walk filesystem at
+  `configure()` time and answer existence checks from a static set
+  (Lute can't yield across metamethod boundaries).
+- **Roblox globals** — `game`, `task`, `typeof`, `Instance`, `Vector3`,
+  `wait`, `tick`, `spawn` injected into the env from `polyfills.luau`.
 
-1. **Build process emulation** — run jest-lua's `roblox-cli` / Rotrieve build
-   step against `node_modules/@rbxts-js/`, producing a flat `Packages/` dir
-   with PascalCase names. Then point the loader at that.
-2. **Smarter sibling resolution** — when `script.Parent.X` misses in the
-   current package's `src/`, fall back to `node_modules/@rbxts-js/<kebab>/src/init`
-   based on the name map. Catches most cases but breaks deep imports.
-3. **Upstream patch** — get jsdotlua/jest-lua to publish a "node-resolved"
-   distribution that uses string require() instead of `script.Parent`.
+After all that, `jest-globals/src/index.lua` line 37 (the actual
+jest entry point) runs and throws its sentinel error. That error is
+the design — jest-lua doesn't expose stand-alone matchers.
 
-(2) is the most tractable. Maybe one more sprint when there's appetite.
+## What it would take to finish
 
-## Why we built lute-jest instead
+To make existing `@rbxts/jest` test files pass under Lute you'd need
+to either:
 
-The homebrew runtime is ~250 lines of Luau and covers the 80% of jest API
-that game-logic unit tests actually use: describe/it/expect/beforeEach,
-~12 matchers, mocks, hooks. It runs anything green-fielded immediately.
+1. **Boot jest-core** — work backwards from `jest-core.runCLI()` and
+   wire up every dep (jest-runner, jest-circus, jest-jasmine2,
+   jest-runtime, jest-message-util, jest-reporters, ...). Each will
+   surface its own Roblox-specific bits (Worker pool, file watchers,
+   snapshot serialization).
+2. **Bypass the gate** — patch `jest-globals/src/index.lua` to skip
+   the `error()`. Then ad-hoc run `it`/`expect`/`describe` from raw
+   exports. Brittle — `expect(x):toBe(y)` needs `MatcherState` setup
+   that only `jest-circus` builds.
+3. **Translate the bridge** — write a thin shim where lute-jest's
+   homebrew runner *exposes* jest-globals-shaped exports
+   (`describe`, `it`, `expect`) backed by our own implementation, so
+   existing test files written to `@rbxts/jest-globals` work
+   unchanged. This is the most pragmatic path.
 
-The 20% gap (snapshots, fake timers, async, jest.mock) is real but not
-worth blocking shipping over. Phase 4+ may close it incrementally, OR
-may flip to jest-lua via the loader once someone solves the flattening.
+(3) is the right next move. Most existing test files only use
+~10 jest API surfaces; what we already have covers it.
+
+## What's in the repo
+
+- `runtime/jest_lua_loader.luau` (~280 LoC) — the loader
+- `runtime/polyfills.luau` — Roblox globals (game, task, etc.)
+- This document
+
+The loader is **not wired into the runner** by default. It's a
+research artifact / proof-of-concept for path (3). The default
+`bun cli/index.ts` still uses lute-jest's homebrew jest at
+`runtime/jest.luau`, which is what 27/27 tests currently pass with.

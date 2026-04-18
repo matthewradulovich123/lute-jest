@@ -63,15 +63,27 @@ local nameMap: { [string]: string } = {
 	["timers"]                   = "Timers",
 	["yargs"]                    = "Yargs",
 	["boolean"]                  = "Boolean",
+	["react-globals"]            = "ReactGlobals",
+	["roblox-lua-promise"]       = "Promise",
+	["roblox-shared"]            = "RobloxShared",
+	["safe-flags"]               = "SafeFlags",
+	["shared"]                   = "Shared",
+	["symbol-luau"]              = "Symbol",
+	["test-utils"]               = "TestUtils",
+	["throat"]                   = "Throat",
+	-- jest-roblox-shared exists too
+	["jest-roblox-shared"]       = "JestRobloxShared",
 }
 
 -- Reverse map (PascalCase → kebab-case dirname)
 local reverseMap: { [string]: string } = {}
 for k, v in pairs(nameMap) do reverseMap[v] = k end
 
-local function fileExists(p)
-	local ok, e = pcall(fs.exists, p)
-	return ok and e
+local fileExists  -- forward decl
+local existsSet: { [string]: boolean } = {}
+
+fileExists = function(p)
+	return existsSet[p] == true
 end
 
 -- Load a package's init.lua and return its module value
@@ -115,9 +127,17 @@ end
 
 -- Build a fake `script` for a given package
 function M._makeScript(pkgKebab: string, pkgPascal: string)
-	local script = {}
-	script.Name = "init"
-	script.ClassName = "ModuleScript"
+	local script
+	-- script.X resolves to a sibling file in the package's src/ dir.
+	-- e.g. boolean/src/init.lua: require(script.toJSBoolean) → src/toJSBoolean.lua
+	script = setmetatable({ Name = "init", ClassName = "ModuleScript" }, {
+		__index = function(_, k)
+			if k == "Parent" then return rawget(script, "_Parent") end
+			if type(k) ~= "string" then return nil end
+			local base = packagesRoot .. "/" .. pkgKebab .. "/src/" .. k
+			return setmetatable({ __isRelModule = true, _path = base, _pkgKebab = pkgKebab, _pkgPascal = pkgPascal, Name = k }, {})
+		end,
+	})
 
 	-- Packages folder: indexed by PascalCase, returns a sentinel that, when require()'d, loads that package
 	local Packages = setmetatable({}, { __index = function(_, k)
@@ -133,16 +153,34 @@ function M._makeScript(pkgKebab: string, pkgPascal: string)
 		})
 	end })
 
-	-- src folder: contains `init` (this) and other module files
+	-- src folder: contains `init` (this) and other module files.
+	-- If `src/<k>` doesn't exist locally, fall back to the global package map.
+	-- This emulates Wally/Rojo's flat Packages/ folder where all sibling packages
+	-- get materialized into one directory at build time.
 	local srcFolder = setmetatable({ Name = "src", Parent = nil, ClassName = "Folder" }, {
 		__index = function(_, k)
-			-- script.Parent.Parent — return the package dir
-			-- script.Parent.X — return a sub-module sentinel
 			if k == "Parent" then return nil end
-			-- look for src/<k>.lua or src/<k>.luau or src/<k>/init.lua
+			if type(k) ~= "string" then return nil end
+			-- Try local file first
 			local base = packagesRoot .. "/" .. pkgKebab .. "/src/" .. k
-			return setmetatable({ __isRelModule = true, _path = base, Name = k }, {})
+			local hasLocal = fileExists(base .. ".lua") or fileExists(base .. ".luau")
+				or fileExists(base .. "/init.lua") or fileExists(base .. "/init.luau")
+			if hasLocal then
+				return setmetatable({ __isRelModule = true, _path = base, _pkgKebab = pkgKebab, _pkgPascal = pkgPascal, Name = k }, {})
+			end
+			-- Fall back to global package map (PascalCase → kebab)
+			local kebab = reverseMap[k]
+			if kebab and fileExists(packagesRoot .. "/" .. kebab .. "/src/init.lua") then
+				return setmetatable({ __isJestLuaPkg = true, _kebab = kebab, Name = k }, {
+					__index = function(_, child)
+						local mod = loadPackage(kebab)
+						return mod[child]
+					end,
+				})
+			end
+			return nil
 		end,
+		__call = function(_, ...) return nil end,
 	})
 
 	local pkgDir = setmetatable({ Name = pkgPascal, ClassName = "Folder", src = srcFolder }, {
@@ -153,7 +191,7 @@ function M._makeScript(pkgKebab: string, pkgPascal: string)
 	})
 	rawset(srcFolder, "Parent", pkgDir)
 
-	rawset(script, "Parent", srcFolder)
+	rawset(script, "_Parent", srcFolder)
 	-- script.Parent.Parent = pkgDir, script.Parent.Parent.Parent = Packages
 	return script
 end
@@ -170,13 +208,40 @@ function M._require(spec)
 				if fileExists(t) then
 					local src = fs.readFileToString(t)
 					local bc = luau.compile(src)
-					-- This sub-module has no special script context; reuse globals only
-					local env = { require = M._require }
+					-- Build a script for this sub-module.
+					local pkgKebab = spec._pkgKebab
+					local pkgPascal = spec._pkgPascal
+					-- The script's "directory" is where its siblings live:
+					-- If t ends in /init.lua, dir = parent (Array/init.lua → dir = Array)
+					-- Otherwise dir = file's parent
+					local scriptDir
+					if t:sub(-9) == "/init.lua" or t:sub(-10) == "/init.luau" then
+						scriptDir = spec._path  -- e.g. .../Array (the directory containing init.lua)
+					else
+						-- file like .../toJSBoolean.lua — dir is parent dir
+						scriptDir = spec._path:match("(.+)/[^/]+$") or spec._path
+					end
+					local subScript
+					subScript = setmetatable({ Name = spec.Name, ClassName = "ModuleScript" }, {
+						__index = function(_, k)
+							if k == "Parent" then
+								-- Parent is the directory above scriptDir, which is *another* virtual
+								-- folder. For sub-sub-modules, we keep walking up via Parent.Parent etc.
+								return M._makeFolder(packagesRoot, pkgKebab, pkgPascal, scriptDir:match("(.+)/[^/]+$") or scriptDir)
+							end
+							if type(k) ~= "string" then return nil end
+							-- siblings of this script (children if init.lua)
+							local base = scriptDir .. "/" .. k
+							return setmetatable({ __isRelModule = true, _path = base, _pkgKebab = pkgKebab, _pkgPascal = pkgPascal, Name = k }, {})
+						end,
+					})
+					local env = { script = subScript, require = M._require }
 					if extraGlobals then for k, v in pairs(extraGlobals) do env[k] = v end end
 					setmetatable(env, { __index = _G })
 					local fn = luau.load(bc, t, env)
 					local ok, result = pcall(fn)
 					if not ok then
+						print("[jest_lua_loader] sub-module load failed: " .. t .. ": " .. tostring(result))
 						return setmetatable({}, { __index = function() return function() end end })
 					end
 					cache[t] = result
@@ -190,9 +255,81 @@ function M._require(spec)
 	return require(spec)
 end
 
+-- Build a folder Instance-like object for a directory under a package's src/.
+-- Used when a sub-module asks for script.Parent.
+function M._makeFolder(pkgsRoot: string, pkgKebab: string, pkgPascal: string, dirPath: string)
+	local folder
+	local srcDir = pkgsRoot .. "/" .. pkgKebab .. "/src"
+	folder = setmetatable({ Name = dirPath:match("([^/]+)$") or "src", ClassName = "Folder" }, {
+		__index = function(_, k)
+			if k == "Parent" then
+				-- Once at or above src, all .Parent walks land in the virtual Packages folder.
+				if #dirPath <= #srcDir then
+					return M._makePackagesFolder()
+				end
+				local up = dirPath:match("(.+)/[^/]+$") or dirPath
+				return M._makeFolder(pkgsRoot, pkgKebab, pkgPascal, up)
+			end
+			if type(k) ~= "string" then return nil end
+			-- Lookup as a child file/dir of dirPath
+			local base = dirPath .. "/" .. k
+			local hasLocal = fileExists(base .. ".lua") or fileExists(base .. ".luau")
+				or fileExists(base .. "/init.lua") or fileExists(base .. "/init.luau")
+			if hasLocal then
+				return setmetatable({ __isRelModule = true, _path = base, _pkgKebab = pkgKebab, _pkgPascal = pkgPascal, Name = k }, {})
+			end
+			-- Cross-package fallback
+			local kebab = reverseMap[k]
+			if kebab and fileExists(packagesRoot .. "/" .. kebab .. "/src/init.lua") then
+				return setmetatable({ __isJestLuaPkg = true, _kebab = kebab, Name = k }, {
+					__index = function(_, child)
+						local mod = loadPackage(kebab)
+						return mod[child]
+					end,
+				})
+			end
+			return nil
+		end,
+	})
+	return folder
+end
+
+function M._makePackagesFolder()
+	local pf
+	pf = setmetatable({ Name = "Packages", ClassName = "Folder" }, { __index = function(_, k)
+		if k == "Parent" then return pf end  -- Packages.Parent → self (avoid nil chain breaks)
+		if type(k) ~= "string" then return nil end
+		local kebab = reverseMap[k] or k
+		return setmetatable({ __isJestLuaPkg = true, _kebab = kebab, Name = k }, {
+			__index = function(_, child)
+				local mod = loadPackage(kebab)
+				return mod[child]
+			end,
+		})
+	end })
+	return pf
+end
+
 function M.configure(opts)
 	packagesRoot = opts.packagesRoot
 	extraGlobals = opts.extraGlobals
+	-- Pre-enumerate filesystem so __index metamethods (which can't yield) can
+	-- check existence with O(1) table lookups instead of fs.exists() calls.
+	existsSet = {}
+	local stack = { packagesRoot }
+	while #stack > 0 do
+		local dir = table.remove(stack)
+		local okList, entries = pcall(fs.listDirectory, dir)
+		if okList and entries then
+			for _, entry in ipairs(entries) do
+				local p = dir .. "/" .. entry.name
+				existsSet[p] = true
+				if entry.type == "dir" then
+					table.insert(stack, p)
+				end
+			end
+		end
+	end
 end
 
 function M.load()
