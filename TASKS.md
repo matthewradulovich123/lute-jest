@@ -24,8 +24,8 @@
 - [ ] **P3.3** Unified output formatter so both modes look the same
 
 ## Outreach
-- [~] **O.1** Write RFC doc (`docs/RFC.md`) — proposal + architecture + benefits
-- [~] **O.2** Comment on jsdotlua/jest-lua issue #2 with our plan + offer collaboration
+- [x] **O.1** Write RFC doc (`docs/RFC.md`) — proposal + architecture + benefits
+- [x] **O.2** Comment on jsdotlua/jest-lua issue #2 — draft in `docs/OUTREACH.md` (notnice to send manually)
 - [x] **O.3** N/A — decision: no outreach to christopher-buss (per notnice)
 
 ## Status legend
